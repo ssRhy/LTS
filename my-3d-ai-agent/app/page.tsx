@@ -28,6 +28,12 @@ export default function Home() {
   // State for code display
   const [code, setCode] = useState('// 生成的Three.js代码将显示在这里');
   
+  // State to track if code has been executed
+  const [codeExecuted, setCodeExecuted] = useState(false);
+  
+  // Ref for the render container
+  const renderContainerRef = useRef<HTMLDivElement>(null);
+  
   // Ref for chat messages container to auto-scroll
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -60,6 +66,7 @@ export default function Home() {
         } else if (data.type === 'code_generated') {
           setCode(data.code || '// 没有代码生成');
           addMessage('我已经生成了Three.js代码，请查看代码区域。', 'ai');
+          setCodeExecuted(false); // Reset code execution state
         }
       } catch (error) {
         console.error('Error parsing message:', error);
@@ -121,6 +128,40 @@ export default function Home() {
     }
   };
   
+  // Function to execute the generated Three.js code
+  const executeCode = () => {
+    if (!renderContainerRef.current || !code) return;
+    
+    try {
+      // Clear the render container first
+      while (renderContainerRef.current.firstChild) {
+        renderContainerRef.current.removeChild(renderContainerRef.current.firstChild);
+      }
+      
+      // Create a new iframe to safely execute the code
+      const iframe = document.createElement('iframe');
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = 'none';
+      
+      renderContainerRef.current.appendChild(iframe);
+      
+      // Write the HTML content to the iframe
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        iframeDoc.open();
+        iframeDoc.write(code);
+        iframeDoc.close();
+        
+        setCodeExecuted(true);
+        addMessage('Three.js代码已成功执行，请查看右侧渲染区域。', 'ai');
+      }
+    } catch (error) {
+      console.error('Error executing code:', error);
+      addMessage(`执行代码时出错: ${error instanceof Error ? error.message : String(error)}`, 'ai');
+    }
+  };
+
   return (
     <div className={styles.page}>
       {/* Left Panel - Chat and Code */}
@@ -160,12 +201,21 @@ export default function Home() {
         <div className={styles.codeContainer}>
           <div className={styles.codeHeader}>
             <span>生成的代码</span>
-            <button onClick={() => {
-              // Copy code to clipboard
-              navigator.clipboard.writeText(code);
-            }}>
-              复制代码
-            </button>
+            <div>
+              <button 
+                onClick={executeCode}
+                disabled={!code || code === '// 生成的Three.js代码将显示在这里'}
+                style={{ marginRight: '0.5rem' }}
+              >
+                执行代码
+              </button>
+              <button onClick={() => {
+                // Copy code to clipboard
+                navigator.clipboard.writeText(code);
+              }}>
+                复制代码
+              </button>
+            </div>
           </div>
           <pre className={styles.codeContent}>
             {code}
@@ -179,7 +229,7 @@ export default function Home() {
           <button>全屏</button>
           <button>重置视图</button>
         </div>
-        <div className={styles.renderContent} id="scene-container">
+        <div className={styles.renderContent} id="scene-container" ref={renderContainerRef}>
           {/* Three.js scene will be rendered here */}
           {!isConnected && (
             <div style={{
@@ -190,6 +240,17 @@ export default function Home() {
               color: 'var(--foreground)',
             }}>
               正在连接到服务器...
+            </div>
+          )}
+          {isConnected && !codeExecuted && (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: '100%',
+              color: 'var(--foreground)',
+            }}>
+              生成代码后，点击"执行代码"按钮来渲染3D场景
             </div>
           )}
         </div>

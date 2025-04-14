@@ -27,12 +27,13 @@
   flex-direction: column;
   height: 100%;
   border-right: 1px solid var(--border);
+  position: relative;
 }
 
 .page_chatContainer__anmmI {
   display: flex;
   flex-direction: column;
-  height: 66.7%;
+  height: 60%;
   background-color: var(--chat-bg);
   overflow: hidden;
 }
@@ -97,13 +98,17 @@
 }
 
 .page_codeContainer__nuGxr {
-  height: 33.3%;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
   background-color: var(--code-bg);
   color: var(--code-text);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--border);
+  z-index: 10;
 }
 
 .page_codeHeader__shOgU {
@@ -114,6 +119,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .page_codeContent__kwJdX {
@@ -123,6 +129,7 @@
   font-family: var(--font-geist-mono);
   font-size: 0.875rem;
   line-height: 1.5;
+  max-height: calc(40vh - 40px);
 }
 
 .page_renderContainer__1lBtw {
