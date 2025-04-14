@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -134,9 +135,8 @@ export default function Home() {
     
     try {
       // Clear the render container first
-      while (renderContainerRef.current.firstChild) {
-        renderContainerRef.current.removeChild(renderContainerRef.current.firstChild);
-      }
+    // 安全地清除渲染容器
+renderContainerRef.current.innerHTML = '';
       
       // Create a new iframe to safely execute the code
       const iframe = document.createElement('iframe');
