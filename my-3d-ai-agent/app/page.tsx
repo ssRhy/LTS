@@ -32,6 +32,9 @@ export default function Home() {
   // State to track if code has been executed
   const [codeExecuted, setCodeExecuted] = useState(false);
   
+  // State to store HTML content for iframe
+  const [iframeContent, setIframeContent] = useState('');
+  
   // Ref for the render container
   const renderContainerRef = useRef<HTMLDivElement>(null);
   
@@ -131,31 +134,13 @@ export default function Home() {
   
   // Function to execute the generated Three.js code
   const executeCode = () => {
-    if (!renderContainerRef.current || !code) return;
+    if (!code) return;
     
     try {
-      // Clear the render container first
-    // 安全地清除渲染容器
-renderContainerRef.current.innerHTML = '';
-      
-      // Create a new iframe to safely execute the code
-      const iframe = document.createElement('iframe');
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.border = 'none';
-      
-      renderContainerRef.current.appendChild(iframe);
-      
-      // Write the HTML content to the iframe
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        iframeDoc.open();
-        iframeDoc.write(code);
-        iframeDoc.close();
-        
-        setCodeExecuted(true);
-        addMessage('Three.js代码已成功执行，请查看右侧渲染区域。', 'ai');
-      }
+      // 设置iframe内容
+      setIframeContent(code);
+      setCodeExecuted(true);
+      addMessage('Three.js代码已成功执行，请查看右侧渲染区域。', 'ai');
     } catch (error) {
       console.error('Error executing code:', error);
       addMessage(`执行代码时出错: ${error instanceof Error ? error.message : String(error)}`, 'ai');
@@ -226,11 +211,16 @@ renderContainerRef.current.innerHTML = '';
       {/* Right Panel - 3D Rendering */}
       <div className={styles.renderContainer}>
         <div className={styles.renderHeader}>
-          <button>全屏</button>
-          <button>重置视图</button>
+          <h3>3D渲染区域</h3>
+          <button 
+            className={styles.executeButton}
+            onClick={executeCode}
+            disabled={!isConnected || !code || code === '// 生成的Three.js代码将显示在这里'}
+          >
+            执行代码
+          </button>
         </div>
         <div className={styles.renderContent} id="scene-container" ref={renderContainerRef}>
-          {/* Three.js scene will be rendered here */}
           {!isConnected && (
             <div style={{
               display: 'flex',
@@ -252,6 +242,18 @@ renderContainerRef.current.innerHTML = '';
             }}>
               生成代码后，点击"执行代码"按钮来渲染3D场景
             </div>
+          )}
+          {codeExecuted && (
+            <iframe
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+              }}
+              sandbox="allow-scripts allow-same-origin"
+              title="Three.js Rendering"
+              srcDoc={iframeContent}
+            />
           )}
         </div>
       </div>
