@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ThreeCanvas, { ThreeCanvasRef } from "./ThreeCanvas";
 import CodeEditor from "./CodeEditor";
 import ConversationLog, { Message } from "./ConversationLog";
@@ -364,18 +364,6 @@ export default function AgentWorkspace() {
           }
           break;
 
-        case "screenshot_request":
-          captureScreenshot(message.quality, message.view, message.requestId);
-          break;
-
-        case "scene_analysis_request":
-          analyzeScene(message.detail, message.focus, message.requestId);
-          break;
-
-        case "agent_complete":
-          setIsAgentWorking(false);
-          break;
-
         case "tool_response":
           // 处理工具响应
           if (message.requestId) {
@@ -525,10 +513,10 @@ export default function AgentWorkspace() {
       sendWebSocketMessage({
         type: "tool_response",
         requestId,
-        result: {
+        result: JSON.stringify({
           success: false,
           error: "Three.js Canvas组件未初始化",
-        },
+        }),
       });
       return;
     }
@@ -541,7 +529,7 @@ export default function AgentWorkspace() {
       sendWebSocketMessage({
         type: "tool_response",
         requestId,
-        result,
+        result: JSON.stringify(result),
       });
 
       // 显示执行结果
@@ -557,10 +545,10 @@ export default function AgentWorkspace() {
       sendWebSocketMessage({
         type: "tool_response",
         requestId,
-        result: {
+        result: JSON.stringify({
           success: false,
           error: err.message,
-        },
+        }),
       });
     }
   }

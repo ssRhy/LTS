@@ -1,0 +1,27 @@
+{
+  "name": "threejs-agent-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && node dist/agent.js",
+    "dev": "tsx agent.ts",
+    "dev:watch": "nodemon --exec \"tsx agent.ts\""
+  },
+  "dependencies": {
+    "@langchain/core": "^0.1.x",
+    "@langchain/openai": "^0.0.x",
+    "dotenv": "^16.x",
+    "langchain": "^0.1.x",
+    "ws": "^8.x",
+    "zod": "^3.x"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.30",
+    "@types/ws": "^8.18.1",
+    "nodemon": "^3.x",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.x",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useRef,
   useEffect,
   useState,
@@ -9,7 +9,7 @@ import {
   ForwardedRef,
 } from "react";
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 // 定义组件Props和暴露的方法类型
 // 在ThreeCanvas.tsx中

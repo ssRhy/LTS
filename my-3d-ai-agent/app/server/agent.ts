@@ -14,6 +14,8 @@ import type { IncomingMessage } from "http";
 import * as http from "http";
 import * as path from "path";
 import 'dotenv/config';
+import Module from "module";
+import { create } from "domain";
 
 
 // Type definitions
@@ -108,7 +110,7 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     extendedWs.isAlive = true;
   });
 
-  extendedWs.on("message", (message: WebSocket.Data) => {
+  extendedWs.on("message",(message: Buffer | ArrayBuffer | Buffer[]) => {
     try {
       const data = JSON.parse(message.toString());
       console.log("Message received:", data);
@@ -331,10 +333,123 @@ const createBasicTools = (ws: ExtendedWebSocket): DynamicStructuredTool[] => [
           `You are a professional Three.js code generation expert. Please generate complete HTML file code based on user description, including a complete Three.js scene.
 Complexity: ${complexity}
 Code requirements:
-1. Include scene, camera, renderer, lights and animation loop
-2. Use CDN to import three.js library (version 0.158.0)
-3. Code should be a complete runnable HTML file
-4. Include basic interaction controls and animation effects`,
+
+1. **使用现代ES模块方式导入Three.js**：
+   - 使用importmap配置模块路径
+   - 使用ES Module Shims确保兼容性
+   - 避免使用已弃用的build/three.js和build/three.min.js
+   - 将script标签改为type="module"
+   - 使用ES模块方式导入Three.js和OrbitControls
+   - 添加了ES Module Shims库，提高浏览器兼容性
+   -"imports": {
+    "three": "https://unpkg.com/three@0.153.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.153.0/examples/jsm/"
+    - Three.js现在默认将OrbitControls作为模块导出 Stack Overflow，导出语句：import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+}
+
+2. **完整的场景设置**：
+   - 场景、相机、渲染器的基本配置
+
+
+3. **交互控制**：
+   - 使用OrbitControls实现旋转、缩放功能
+
+
+5. **代码结构**：
+   - 单HTML文件实现，便于在线平台直接运行
+   - 内联CSS样式
+   - 清晰的代码注释
+6.例子：<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Apple Model with Three.js</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+    <!-- ES Module Shims for compatibility -->
+    <script async src="https://unpkg.com/es-module-shims@1.5.0/dist/es-module-shims.js"></script>
+    
+    <!-- Importmap for Three.js modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.153.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.153.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f0f0);
+
+        // Camera setup
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1, 3);
+
+        // Renderer setup
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // OrbitControls setup
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // Enable damping for smoother controls
+        controls.dampingFactor = 0.25;
+
+        // Apple geometry and material
+        const appleGeometry = new THREE.SphereGeometry(0.5, 32, 32);
+        const appleMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+        const apple = new THREE.Mesh(appleGeometry, appleMaterial);
+        scene.add(apple);
+
+        // Stem geometry and material
+        const stemGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 32);
+        const stemMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+        const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+        stem.position.y = 0.65;
+        scene.add(stem);
+
+        // Light setup
+        const ambientLight = new THREE.AmbientLight(0x404040, 2); // Soft white light
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xffffff, 1);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // Update controls
+            
+            // Add simple rotation animation
+            apple.rotation.y += 0.01;
+            
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
+`,
         ],
         ["human", "{input}"],
       ]);
@@ -376,7 +491,16 @@ const createGenerationAgent = (llm: AzureChatOpenAI) => {
   const prompt = ChatPromptTemplate.fromMessages([
     [
       "system",
-      "You are a Three.js code generation expert, generating basic code including Scene/Camera/Renderer",
+      `You are a Three.js code generation expert, generating basic code including Scene/Camera/Renderer
+      1. **使用现代ES模块方式导入Three.js**：
+   - 使用importmap配置模块路径
+   - 使用ES Module Shims确保兼容性
+   - 避免使用已弃用的build/three.js和build/three.min.js
+   -使用0.158.0版本threejs
+   - 将script标签改为type="module"
+   - 使用ES模块方式导入Three.js和OrbitControls
+   - 添加了ES Module Shims库，提高浏览器兼容性
+   - 完整的场景设置：场景、相机、渲染器的基本配置`
     ],
     ["human", "{input}"],
   ]);
@@ -388,7 +512,15 @@ const createValidationAgent = (
   tools: DynamicStructuredTool[]
 ) => {
   const prompt = ChatPromptTemplate.fromMessages([
-    ["system", "You are responsible for code validation and correction"],
+    ["system", `You are responsible for code validation and correction
+    1. **使用现代ES模块方式导入Three.js**：
+   - 使用importmap配置模块路径
+   - 使用ES Module Shims确保兼容性
+   - 避免使用已弃用的build/three.js和build/three.min.js
+   -使用0.153.0版本threejs
+   - 将script标签改为type="module"
+   - 使用ES模块方式导入Three.js和OrbitControls
+   - 添加了ES Module Shims库，提高浏览器兼容性`],
     new MessagesPlaceholder("chat_history"),
     ["human", "{input}"],
     new MessagesPlaceholder("agent_scratchpad"),
