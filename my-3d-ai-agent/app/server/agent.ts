@@ -1,9 +1,13 @@
 import dotenv from "dotenv";
 dotenv.config();
+// 引入 RunnableSequence 和 StringOutputParser
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { Document } from "@langchain/core/documents";
 import { StringOutputParser } from "@langchain/core/output_parsers";
+import { RunnableSequence } from "@langchain/core/runnables";
+import { BufferMemory } from "langchain/memory";
+import { ConversationChain } from "langchain/chains";
 
 import { AzureChatOpenAI } from "@langchain/openai";
 import {
@@ -126,7 +130,127 @@ const llm = new AzureChatOpenAI({
   azureOpenAIApiVersion: "2024-02-15-preview",
 });
 
-// ==================== tool代码生成 的propmt ====================
+// ==================== 初始化 Embeddings 和 Vector Store ====================
+// 配置 Azure OpenAI Embeddings
+const embeddings = new OpenAIEmbeddings({
+  azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+  azureOpenAIApiDeploymentName:
+    process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_NAME ||
+    "text-embedding-ada-002",
+  azureOpenAIApiVersion: "2024-02-15-preview",
+});
+
+// 创建向量存储（初始为空，将在初始化时填充）
+let vectorStore;
+
+// 初始化代码存储
+async function initializeCodeMemory() {
+  // 检查是否有历史代码存储文件
+  const historyPath = path.join(process.cwd(), "code_history.json");
+  if (fs.existsSync(historyPath)) {
+    try {
+      const historyData = JSON.parse(fs.readFileSync(historyPath, "utf-8"));
+
+      // 将历史代码转换为Document对象数组
+      const docs = historyData.map(
+        (entry) =>
+          new Document({
+            pageContent: entry.code,
+            metadata: {
+              prompt: entry.prompt,
+              timestamp: entry.timestamp,
+              id: entry.id,
+            },
+          })
+      );
+
+      // 使用fromDocuments创建向量存储
+      vectorStore = await MemoryVectorStore.fromDocuments(docs, embeddings);
+      console.log(`加载了 ${historyData.length} 个历史代码示例到向量存储`);
+    } catch (error) {
+      console.error("加载历史代码时出错:", error);
+    }
+  } else {
+    console.log("没有找到历史代码存储，创建新的向量存储");
+    // 创建空的向量存储
+    vectorStore = new MemoryVectorStore(embeddings);
+  }
+}
+
+// 保存新代码到历史记录
+async function saveCodeToHistory(prompt, code) {
+  const historyPath = path.join(process.cwd(), "code_history.json");
+  let historyData = [];
+
+  // 读取现有历史
+  if (fs.existsSync(historyPath)) {
+    try {
+      historyData = JSON.parse(fs.readFileSync(historyPath, "utf-8"));
+    } catch (error) {
+      console.error("读取历史文件时出错:", error);
+    }
+  }
+
+  // 添加新条目
+  const newEntry = {
+    id: Date.now().toString(),
+    prompt: prompt,
+    code: code,
+    timestamp: new Date().toISOString(),
+  };
+
+  historyData.push(newEntry);
+
+  // 保存回文件
+  fs.writeFileSync(historyPath, JSON.stringify(historyData, null, 2), "utf-8");
+
+  // 同时添加到向量存储
+  await vectorStore.addDocuments([
+    new Document({
+      pageContent: code,
+      metadata: {
+        prompt: prompt,
+        timestamp: newEntry.timestamp,
+        id: newEntry.id,
+      },
+    }),
+  ]);
+
+  console.log("代码已保存到历史记录");
+  return newEntry.id;
+}
+
+// 从向量存储中检索相关代码
+async function retrieveSimilarCode(prompt, k = 3) {
+  // 创建一个检索器，指定返回k个最相似的文档
+  const retriever = vectorStore.asRetriever(k);
+  // 使用检索器检索相关代码
+  const results = await retriever.invoke(prompt);
+  return results;
+}
+
+// ==================== 对话记忆与流程优化 ====================
+// 创建对话记忆
+const memory = new BufferMemory({
+  returnMessages: true,
+  memoryKey: "chat_history",
+  inputKey: "input",
+  outputKey: "output",
+});
+
+// 创建对话链用于处理用户输入，包含记忆功能
+const conversationChain = new ConversationChain({
+  llm: llm,
+  memory: memory,
+  prompt: ChatPromptTemplate.fromMessages([
+    ["system", "你是Three.js代码生成助手。分析用户需求，提供有用的建议。"],
+    new MessagesPlaceholder("chat_history"),
+    ["human", "{input}"],
+  ]),
+  verbose: true,
+});
+
+// ==================== tool代码生成 的prompt ====================
 const codeGenerationPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
@@ -146,13 +270,73 @@ const codeGenerationPrompt = ChatPromptTemplate.fromMessages([
       - Proper component initialization sequence
       - Responsive design with resize handlers
       - Clean, commented code structure
-       Focus exclusively on translating the description into working code. Include all requested elements while maintaining a clean, professional implementation.
+      
+   重要：我会提供两种类型的上下文信息：
+   1. 相似代码示例：这些是之前生成的与当前需求相似的代码，可以参考其结构和实现方式
+   2. 对话历史：这些是之前与用户的交互，可以从中了解用户的偏好和额外的上下文信息
+   
+   请根据提供的上下文信息，结合用户的新需求，生成最适合的Three.js代码。
 `,
   ],
-  ["human", "{input}"],
+  new MessagesPlaceholder("chat_history"),
+  [
+    "human",
+    "以下是与当前需求相似的代码示例:\n{similar_code}\n\n用户需求: {input}",
+  ],
 ]);
 
-const codeGenerationChain = codeGenerationPrompt.pipe(llm);
+// ==================== 使用RunnableSequence和StringOutputParser ====================
+// 创建用于获取上下文信息的函数
+async function getSimilarCode(input) {
+  const similarCodeDocs = await retrieveSimilarCode(input);
+  return similarCodeDocs.length > 0
+    ? similarCodeDocs
+        .map(
+          (doc) =>
+            `示例 (来自: ${doc.metadata.prompt}):\n${doc.pageContent.substring(
+              0,
+              1500
+            )}...\n\n`
+        )
+        .join("\n")
+    : "没有找到相似代码示例。";
+}
+
+async function getChatHistory() {
+  const memoryVariables = await memory.loadMemoryVariables({});
+  return memoryVariables.chat_history || [];
+}
+
+// 创建代码生成序列
+const codeGenerationSequence = RunnableSequence.from([
+  {
+    // 输入映射函数，将用户输入转换为提示模板所需的输入格式
+    async formatter(input) {
+      if (typeof input === "string") {
+        input = { input };
+      }
+
+      // 获取聊天历史
+      const chatHistory = await getChatHistory();
+
+      // 获取相似代码
+      const similarCode = await getSimilarCode(input.input);
+
+      // 返回格式化后的输入对象
+      return {
+        input: input.input,
+        chat_history: chatHistory,
+        similar_code: similarCode,
+      };
+    },
+  },
+  // 应用提示模板
+  codeGenerationPrompt,
+  // 使用LLM生成响应
+  llm,
+  // 使用StringOutputParser解析输出为字符串
+  new StringOutputParser(),
+]);
 
 // ==================== 代码传递 tool ====================
 const tools = [
@@ -218,7 +402,32 @@ const tools = [
         : "代码验证通过";
     },
   }),
+  // ==================== 代码记忆检索 tool ====================
+  new DynamicStructuredTool({
+    name: "retrieve_similar_code",
+    description: "根据用户的描述检索相似的代码示例",
+    schema: z.object({
+      query: z.string().describe("用户的代码需求描述"),
+      limit: z.number().optional().describe("要检索的代码示例数量，默认为3"),
+    }),
+    func: async ({ query, limit = 3 }) => {
+      const results = await retrieveSimilarCode(query, limit);
+      if (results.length === 0) {
+        return "没有找到相似代码。";
+      }
+
+      return results
+        .map(
+          (doc, index) =>
+            `示例 ${index + 1} (来自: ${
+              doc.metadata.prompt
+            }):\n${doc.pageContent.substring(0, 500)}...\n`
+        )
+        .join("\n\n");
+    },
+  }),
 ];
+
 // ==================== 创建agent中介 ====================
 const executionAgentPrompt = ChatPromptTemplate.fromMessages([
   [
@@ -226,45 +435,99 @@ const executionAgentPrompt = ChatPromptTemplate.fromMessages([
     `你是一个代码执行协调Agent，负责：
 1. 调用验证工具（validate_threejs_code）检查代码完整性
 2. 自动保存并通过send_code_to_websocket把代码发送到前端实时查看代码和代码所渲染的3d场景
-3. 将问题反馈给生成Agent（executionAgentExecutor）`,
+3. 将问题反馈给生成Agent（executionAgentExecutor）
+4. 使用retrieve_similar_code工具检索相似代码示例作为参考`,
   ],
   new MessagesPlaceholder("chat_history"),
   ["human", "{input}"],
   new MessagesPlaceholder("agent_scratchpad"),
 ]);
+
 // 调用 AgentExecutor等工具
 const executionAgent = createToolCallingAgent({
   llm,
   tools,
   prompt: executionAgentPrompt,
 });
+
 // ==================== 协调多个工具 和 执行任务 ===================
 const executionAgentExecutor = new AgentExecutor({
   agent: executionAgent,
   tools,
   verbose: true,
+  // 不使用memory避免冲突
 });
 
-// ==================== 主流程 workflow？ ====================
-async function mainAgent(userInput) {
-  // 步骤1: 生成代码，调用codeGenerationChain
-  const generationResult = await codeGenerationChain.invoke({
-    input: userInput,
-  });
-  const generatedCode = generationResult.content;
+// ==================== 主流程 workflow ====================
+// 定义GenerationContext接口
+interface GenerationContext {
+  chatHistory: any[];
+  similarCode: string;
+}
 
-  // 步骤2: 执行验证和预览，调用executionAgentExecutor
+async function mainAgent(userInput) {
+  // 步骤0: 临时跳过分析用户输入
+  const analysisResult = {
+    needsConversationMemory: true,
+    needsCodeMemory: false, // 设置为false禁用代码记忆
+  };
+
+  console.log("临时设置: 仅使用对话记忆，跳过代码记忆");
+
+  // 步骤1: 生成代码前准备上下文
+  let generationContext: GenerationContext = {
+    chatHistory: [],
+    similarCode: "跳过代码记忆功能，使用简单模板。",
+  };
+
+  // 获取对话记忆
+  // 从记忆中获取历史对话
+  const memoryVariables = await memory.loadMemoryVariables({});
+  generationContext.chatHistory = memoryVariables.chat_history || [];
+  console.log("已加载对话记忆");
+
+  // 临时跳过代码记忆检索，使用固定内容
+  generationContext.similarCode = "跳过向量搜索功能验证。";
+
+  // 步骤2: 生成代码，调用增强的codeGenerationChain
+  console.log("开始生成代码...");
+  const generationResult = await codeGenerationPrompt.pipe(llm).invoke({
+    input: userInput,
+    similar_code: generationContext.similarCode,
+    chat_history: generationContext.chatHistory || [],
+  });
+
+  const generatedCode = generationResult.content;
+  console.log("代码生成完成，长度:", generatedCode.length);
+
+  // 步骤3: 执行验证和预览，调用executionAgentExecutor
   const executionResult = await executionAgentExecutor.invoke({
     input: `验证并预览以下代码：\n${generatedCode}`,
-    chat_history: [],
   });
 
-  // 步骤3: 处理反馈
+  // 添加测试日志
+  console.log("记忆测试 - 当前记忆内容:");
+  const currentMemory = await memory.loadMemoryVariables({});
+  console.log(JSON.stringify(currentMemory, null, 2));
+
+  // 步骤4: 处理反馈并保存到记忆
   if (executionResult.output.includes("验证通过")) {
+    // 临时跳过向量存储
+    // await saveCodeToHistory(userInput, generatedCode);
+
+    // 记录这次成功的对话到对话记忆
+    await memory.saveContext(
+      { input: userInput },
+      { output: "代码生成成功，已通过验证" }
+    );
+
+    console.log("记忆测试 - 保存成功记录后:");
+    const updatedMemory = await memory.loadMemoryVariables({});
+    console.log(JSON.stringify(updatedMemory, null, 2));
+
     // 使用WebSocket发送代码
     await executionAgentExecutor.invoke({
       input: `通过WebSocket发送以下代码：\n${generatedCode}`,
-      chat_history: [],
     });
 
     return {
@@ -273,6 +536,16 @@ async function mainAgent(userInput) {
       preview: executionResult.output,
     };
   } else {
+    // 记录这次失败的对话到对话记忆
+    await memory.saveContext(
+      { input: userInput },
+      { output: `代码生成需要修正: ${executionResult.output}` }
+    );
+
+    console.log("记忆测试 - 保存失败记录后:");
+    const updatedMemory = await memory.loadMemoryVariables({});
+    console.log(JSON.stringify(updatedMemory, null, 2));
+
     return {
       status: "needs_revision",
       feedback: executionResult.output,
@@ -285,6 +558,16 @@ async function mainAgent(userInput) {
 async function interactiveLoop() {
   console.log("Three.js 智能生成系统正在运行...");
   console.log("WebSocket服务器监听端口:", process.env.WS_PORT || 3001);
+
+  // 临时跳过初始化代码记忆
+  console.log("跳过向量存储初始化...");
+  // await initializeCodeMemory();
+
+  // 测试记忆功能
+  console.log("测试记忆功能...");
+  await memory.saveContext({ input: "测试输入" }, { output: "测试记忆初始化" });
+  const testMemory = await memory.loadMemoryVariables({});
+  console.log("初始记忆测试:", JSON.stringify(testMemory, null, 2));
 
   // 保留命令行接口作为备用
   const rl = readline.createInterface({
@@ -302,8 +585,9 @@ async function interactiveLoop() {
       const result = await mainAgent(input);
 
       if (result.status === "success") {
+        console.log("\n代码生成成功，已通过WebSocket发送!");
       } else {
-        console.log("\n 需要修正：", result.feedback);
+        console.log("\n需要修正：", result.feedback);
       }
 
       ask();
@@ -315,3 +599,4 @@ async function interactiveLoop() {
 
 // 启动系统
 interactiveLoop();
+
